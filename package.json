@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test:s3": "node test-s3-access.js"
+    "test:s3": "node test-s3-access.js",
+    "mcp": "node mcp-server.js",
+    "mcp:help": "node mcp-server.js"
   },
   "keywords": [],
   "author": "",
@@ -15,7 +17,9 @@
     "@aws-sdk/client-s3": "^3.937.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "form-data": "^4.0.0",
     "multer": "^2.0.2",
+    "node-fetch": "^2.7.0",
     "uuid": "^9.0.0"
   }
 }
