@@ -68,6 +68,8 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     await s3Client.send(new PutObjectCommand(uploadParams));
 
     // Generate URL for the uploaded image
+    // Note: This assumes the S3 bucket is configured for public read access.
+    // For private buckets, consider using GetObjectCommand with getSignedUrl from @aws-sdk/s3-request-presigner
     const imageUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
 
     res.status(200).json({
