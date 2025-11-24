@@ -33,6 +33,38 @@ function buildS3Key(fileName) {
 }
 
 /**
+ * Décode une image base64 ou data URI
+ */
+function decodeBase64Image(imageData) {
+  // Handle data URI format: data:image/jpeg;base64,/9j/4AAQSkZJRg...
+  let base64String = imageData;
+  let contentType = 'image/jpeg'; // default
+  
+  if (imageData.startsWith('data:')) {
+    const matches = imageData.match(/^data:([^;]+);base64,(.+)$/);
+    if (matches) {
+      contentType = matches[1];
+      base64String = matches[2];
+    } else {
+      throw new Error('Invalid data URI format. Use: data:image/type;base64,<base64string>');
+    }
+  }
+  
+  // Validate MIME type
+  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimeTypes.includes(contentType)) {
+    throw new Error(`Invalid image type: ${contentType}. Only JPEG, PNG, GIF, and WebP are allowed.`);
+  }
+  
+  try {
+    const buffer = Buffer.from(base64String, 'base64');
+    return { buffer, contentType };
+  } catch (error) {
+    throw new Error('Invalid base64 string');
+  }
+}
+
+/**
  * Télécharge une image depuis une URL
  */
 async function downloadImageFromUrl(imageUrl) {
@@ -51,6 +83,38 @@ async function downloadImageFromUrl(imageUrl) {
   return { buffer, contentType };
 }
 
+/**
+ * Décode une image base64 ou data URI
+ */
+function decodeBase64Image(imageData) {
+  // Handle data URI format: data:image/jpeg;base64,/9j/4AAQSkZJRg...
+  let base64String = imageData;
+  let contentType = 'image/jpeg'; // default
+  
+  if (imageData.startsWith('data:')) {
+    const matches = imageData.match(/^data:([^;]+);base64,(.+)$/);
+    if (matches) {
+      contentType = matches[1];
+      base64String = matches[2];
+    } else {
+      throw new Error('Invalid data URI format. Use: data:image/type;base64,<base64string>');
+    }
+  }
+  
+  // Validate MIME type
+  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimeTypes.includes(contentType)) {
+    throw new Error(`Invalid image type: ${contentType}. Only JPEG, PNG, GIF, and WebP are allowed.`);
+  }
+  
+  try {
+    const buffer = Buffer.from(base64String, 'base64');
+    return { buffer, contentType };
+  } catch (error) {
+    throw new Error('Invalid base64 string');
+  }
+}
+
 // ============================================
 // AWS S3 Configuration
 // ============================================
@@ -66,21 +130,6 @@ const s3Client = new S3Client({
 
 // Configure multer for memory storage
 const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    // Accept only image files
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'));
-    }
-  },
-});
 
 // ============================================
 // API Routes
@@ -91,7 +140,7 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'Image Upload API is running',
     endpoints: {
-      upload: 'POST /upload - Upload an image to S3 (multipart/form-data or JSON with imageUrl)',
+      upload: 'POST /upload - Upload an image (3 modes: multipart, base64 JSON, or imageUrl)',
       'mcp-tools': 'GET /mcp/tools - Get available MCP tools',
       'mcp-status': 'GET /mcp/status - Get API status',
       'mcp-generate-url': 'GET /mcp/generate-url?fileName=<name> - Generate image URL'
@@ -196,75 +245,75 @@ app.get('/mcp/generate-url', (req, res) => {
   }
 });
 
-// Upload endpoint - supports both multipart (file) and JSON (URL)
+// Upload endpoint - supports both multipart (file + fields) and JSON (URL)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-app.post('/upload', async (req, res) => {
+// Configure multer to handle both files and fields
+const uploadWithFields = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept only image files
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'));
+    }
+  },
+});
+
+app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
   try {
     let buffer;
     let contentType;
-    let originalFileName = null;
+    let fileName;
 
-    // Check if it's a multipart file upload
-    if (req.headers['content-type']?.includes('multipart/form-data')) {
-      // Use multer for file upload
-      return upload.single('image')(req, res, async (err) => {
-        if (err) {
-          return res.status(400).json({ error: err.message });
-        }
-        
-        if (!req.file) {
-          return res.status(400).json({ error: 'No image file provided' });
-        }
-
-        try {
-          buffer = req.file.buffer;
-          contentType = req.file.mimetype;
-          originalFileName = req.file.originalname;
-          
-          // Generate unique ID for the image
-          const uniqueId = uuidv4();
-          const fileExtension = path.extname(originalFileName);
-          const fileName = `${uniqueId}${fileExtension}`;
-          
-          // Build S3 key with folder prefix
-          const s3Key = buildS3Key(fileName);
-
-          // Upload to S3
-          const uploadParams = {
-            Bucket: process.env.AWS_S3_BUCKET_NAME,
-            Key: s3Key,
-            Body: buffer,
-            ContentType: contentType,
-          };
-
-          await s3Client.send(new PutObjectCommand(uploadParams));
-
-          // Generate URL for the uploaded image
-          const imageUrl = generateImageUrl(fileName);
-
-          res.status(200).json({
-            message: 'Image uploaded successfully',
-            url: imageUrl,
-            fileName: fileName,
-            s3Key: s3Key,
-            source: 'multipart-upload'
-          });
-        } catch (error) {
-          console.error('Upload error:', error);
-          res.status(500).json({ 
-            error: 'Failed to upload image',
-            details: error.message 
-          });
-        }
-      });
+    // Mode 1: Multipart file upload
+    if (req.file) {
+      buffer = req.file.buffer;
+      contentType = req.file.mimetype;
+      const originalFileName = req.file.originalname;
+      
+      // Use custom fileName from fields if provided, otherwise generate UUID
+      const customFileName = req.body?.fileName;
+      
+      if (customFileName) {
+        fileName = customFileName;
+      } else {
+        // Generate unique ID for the image
+        const uniqueId = uuidv4();
+        const fileExtension = path.extname(originalFileName);
+        fileName = `${uniqueId}${fileExtension}`;
+      }
     }
+    // Mode 2: JSON with base64 image
+    else if (req.body?.image) {
+      const { image, fileName: customFileName } = req.body;
+      
+      // Decode base64 image
+      const { buffer: base64Buffer, contentType: base64ContentType } = decodeBase64Image(image);
+      buffer = base64Buffer;
+      contentType = base64ContentType;
 
-    // Check if it's a URL-based upload (JSON body)
-    const { imageUrl, fileName: customFileName } = req.body;
-    
-    if (imageUrl) {
+      // Generate unique ID or use custom name
+      if (customFileName) {
+        fileName = customFileName;
+      } else {
+        const uniqueId = uuidv4();
+        const fileExtension = contentType === 'image/jpeg' ? '.jpg' : 
+                             contentType === 'image/png' ? '.png' :
+                             contentType === 'image/gif' ? '.gif' : '.webp';
+        fileName = `${uniqueId}${fileExtension}`;
+      }
+    }
+    // Mode 3: JSON with imageUrl
+    else if (req.body?.imageUrl) {
+      const { imageUrl, fileName: customFileName } = req.body;
+      
       // Download image from URL
       const { buffer: urlBuffer, contentType: urlContentType } = await downloadImageFromUrl(imageUrl);
       buffer = urlBuffer;
@@ -273,41 +322,41 @@ app.post('/upload', async (req, res) => {
       // Generate unique ID or use custom name
       const uniqueId = customFileName || uuidv4();
       const fileExtension = customFileName ? (path.extname(customFileName) || '.jpg') : '.jpg';
-      const fileName = customFileName ? uniqueId : `${uniqueId}${fileExtension}`;
-      
-      // Build S3 key with folder prefix
-      const s3Key = buildS3Key(fileName);
-
-      // Upload to S3
-      const uploadParams = {
-        Bucket: process.env.AWS_S3_BUCKET_NAME,
-        Key: s3Key,
-        Body: buffer,
-        ContentType: contentType,
-      };
-
-      await s3Client.send(new PutObjectCommand(uploadParams));
-
-      // Generate URL for the uploaded image
-      const resultUrl = generateImageUrl(fileName);
-
-      res.status(200).json({
-        message: 'Image uploaded successfully from URL',
-        url: resultUrl,
-        fileName: fileName,
-        s3Key: s3Key,
-        source: 'url-upload',
-        sourceUrl: imageUrl
-      });
-    } else {
+      fileName = customFileName ? uniqueId : `${uniqueId}${fileExtension}`;
+    }
+    // Mode 4: No valid input
+    else {
       return res.status(400).json({ 
         error: 'No image provided',
         supported_methods: [
-          'multipart/form-data with field "image"',
-          'JSON with field "imageUrl" and optional "fileName"'
+          'multipart/form-data with "image" file and optional "fileName" field',
+          'JSON with "image" (base64 or data URI) and optional "fileName"',
+          'JSON with "imageUrl" and optional "fileName"'
         ]
       });
     }
+
+    // Upload to S3
+    const s3Key = buildS3Key(fileName);
+    const uploadParams = {
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: s3Key,
+      Body: buffer,
+      ContentType: contentType,
+    };
+
+    await s3Client.send(new PutObjectCommand(uploadParams));
+
+    // Generate URL for the uploaded image
+    const imageUrl = generateImageUrl(fileName);
+
+    res.status(200).json({
+      message: 'Image uploaded successfully',
+      url: imageUrl,
+      fileName: fileName,
+      s3Key: s3Key,
+      source: req.file ? 'multipart-upload' : (req.body?.image ? 'base64-upload' : 'url-upload')
+    });
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ 
