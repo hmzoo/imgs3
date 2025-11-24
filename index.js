@@ -56,11 +56,15 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     const uniqueId = uuidv4();
     const fileExtension = path.extname(req.file.originalname);
     const fileName = `${uniqueId}${fileExtension}`;
+    
+    // Build S3 key with folder prefix
+    const folder = process.env.AWS_S3_FOLDER ? `${process.env.AWS_S3_FOLDER}/` : '';
+    const s3Key = `${folder}${fileName}`;
 
     // Upload to S3
     const uploadParams = {
       Bucket: process.env.AWS_S3_BUCKET_NAME,
-      Key: fileName,
+      Key: s3Key,
       Body: req.file.buffer,
       ContentType: req.file.mimetype,
     };
@@ -70,7 +74,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     // Generate URL for the uploaded image
     // Note: This assumes the S3 bucket is configured for public read access.
     // For private buckets, consider using GetObjectCommand with getSignedUrl from @aws-sdk/s3-request-presigner
-    const imageUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
+    const imageUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
 
     res.status(200).json({
       message: 'Image uploaded successfully',
