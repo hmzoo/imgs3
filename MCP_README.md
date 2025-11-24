@@ -115,82 +115,9 @@ PORT=3000
 
 ## 🚀 Déploiement
 
-L'API est déployée sur Vercel:
+L'API peut être déployée sur Vercel ou n'importe quel serveur Node.js:
 ```
-https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app
-```
-
-Tous les exemples ci-dessus fonctionnent en remplaçant `http://localhost:3000` par l'URL de production.
-
-Claude utilise l'outil getImageUrl:
-- fileName: "mon-image.jpg"
-
-Réponse:
-"L'URL est: https://hmzoo.s3.eu-west-1.amazonaws.com/images/mon-image.jpg"
+https://votre-domaine.vercel.app
 ```
 
-## Configuration
-
-### Variables d'environnement
-
-```env
-# URL API locale
-MCP_API_URL=http://localhost:3000
-
-# URL API production
-MCP_API_URL_PROD=https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app
-
-# Configuration S3
-AWS_REGION=eu-west-1
-AWS_S3_BUCKET_NAME=hmzoo
-AWS_S3_FOLDER=images
-```
-
-## Formats d'image supportés
-
-- `.jpg`, `.jpeg`
-- `.png`
-- `.gif`
-- `.webp`
-
-## Limite de taille
-
-- Local: 5MB par défaut
-- Vercel: ~4.5MB (plan gratuit)
-
-## Troubleshooting
-
-### "Erreur: Fichier non trouvé"
-→ Vérifiez que le chemin du fichier est correct
-
-### "Erreur API (403): AccessDenied"
-→ Vérifiez les credentials AWS et les permissions IAM
-
-### "Erreur: Statut HTTP 500"
-→ Vérifiez que l'API est en cours d'exécution
-
-## Architecture
-
-```
-Claude/IA
-    ↓
-MCP Server (mcp-server.js)
-    ↓
-API (index.js) - Locale ou Vercel
-    ↓
-AWS S3
-```
-
-## Déploiement du serveur MCP
-
-Pour utiliser en production avec Claude Desktop:
-
-1. Clonez le repo
-2. Installez les dépendances: `npm install`
-3. Mettez à jour la config: `~/.claude/claude.json`
-4. Redémarrez Claude Desktop
-5. Les outils seront disponibles dans Claude!
-
-## License
-
-ISC
+Tous les exemples ci-dessus fonctionnent en remplaçant `http://localhost:3000` par votre URL de déploiement.
