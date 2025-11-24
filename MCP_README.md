@@ -1,160 +1,126 @@
-# 🚀 MCP Server - API Upload Images S3
+# 🚀 Image Upload API - HTTP Endpoints
 
-Serveur MCP pour intégrer l'API d'upload d'images avec les IAs (Claude, etc.)
+API simple pour uploader des images vers Amazon S3 avec 3 modes de transmission.
 
-## Installation
+## Installation & Lancement
 
 ```bash
 npm install
+npm start
 ```
 
-## Utilisation
+Le serveur démarre sur `http://localhost:3000`
 
-### 1. Mode CLI
+## 📡 Endpoints HTTP
 
+### 1. GET `/` - Health Check
 ```bash
-# Vérifier le statut de l'API
-npm run mcp status
-
-# Uploader une image (local)
-npm run mcp upload ./image.jpg
-
-# Uploader une image (production)
-npm run mcp upload ./image.jpg --api-url https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app
-
-# Générer une URL S3
-npm run mcp url monimage.jpg
+curl http://localhost:3000/
 ```
+Retourne les endpoints disponibles et le statut du serveur.
 
-### 2. Mode Module (Programme)
+### 2. POST `/upload` - Upload Image (3 modes)
 
-```javascript
-const { uploadImage, getImageUrl, getApiStatus } = require('./mcp-server');
-
-// Upload une image
-const result = await uploadImage('./image.jpg');
-console.log(result.url);
-
-// Générer une URL
-const urlInfo = getImageUrl('myimage.jpg');
-console.log(urlInfo.url);
-
-// Vérifier le statut
-const status = await getApiStatus();
-console.log(status);
+#### **Mode A: Multipart/Form-Data (Fichier)**
+```bash
+curl -X POST http://localhost:3000/upload \
+  -F "image=@/path/to/image.jpg" \
+  -F "fileName=custom-name.jpg"
 ```
-
-### 3. Mode MCP (Claude/IAs)
-
-Pour utiliser avec Claude Desktop, ajoutez à `~/.claude/claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "imgs3": {
-      "command": "node",
-      "args": ["/chemin/vers/imgs3/mcp-server.js"],
-      "env": {
-        "MCP_API_URL_PROD": "https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app"
-      }
-    }
-  }
-}
-```
-
-## Outils Disponibles
-
-### 1. `uploadImage`
-
-Upload une image vers S3.
 
 **Paramètres:**
-- `filePath` (string, requis): Chemin vers le fichier image local
-- `apiUrl` (string, optionnel): URL API (défaut: http://localhost:3000)
+- `image` (requis) : Fichier image (multipart)
+- `fileName` (optionnel) : Nom personnalisé (UUID si omis)
 
-**Response:**
+**Réponse:**
 ```json
 {
-  "success": true,
-  "message": "Image uploadée avec succès",
-  "fileName": "550e8400-e29b-41d4-a716-446655440000.jpg",
-  "url": "https://hmzoo.s3.eu-west-1.amazonaws.com/images/550e8400-e29b-41d4-a716-446655440000.jpg",
-  "bucket": "hmzoo",
-  "folder": "images"
+  "message": "Image uploaded successfully",
+  "url": "https://hmzoo.s3.eu-west-1.amazonaws.com/images/custom-name.jpg",
+  "fileName": "custom-name.jpg",
+  "s3Key": "images/custom-name.jpg",
+  "source": "multipart-upload"
 }
 ```
 
-### 2. `getImageUrl`
-
-Génère l'URL S3 d'une image (sans upload).
+#### **Mode B: JSON avec URL**
+```bash
+curl -X POST http://localhost:3000/upload \
+  -H "Content-Type: application/json" \
+  -d '{
+    "imageUrl": "https://example.com/image.jpg",
+    "fileName": "downloaded.jpg"
+  }'
+```
 
 **Paramètres:**
-- `fileName` (string, requis): Nom du fichier
+- `imageUrl` (requis) : URL publique de l'image
+- `fileName` (optionnel) : Nom personnalisé (UUID si omis)
 
-**Response:**
-```json
-{
-  "success": true,
-  "fileName": "myimage.jpg",
-  "s3Key": "images/myimage.jpg",
-  "url": "https://hmzoo.s3.eu-west-1.amazonaws.com/images/myimage.jpg",
-  "bucket": "hmzoo",
-  "region": "eu-west-1",
-  "folder": "images"
-}
+#### **Mode C: JSON avec Base64**
+```bash
+curl -X POST http://localhost:3000/upload \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
+    "fileName": "encoded.jpg"
+  }'
 ```
-
-### 3. `getApiStatus`
-
-Vérifie le statut de l'API.
 
 **Paramètres:**
-- `apiUrl` (string, optionnel): URL API
+- `image` (requis) : Data URI base64 (`data:image/type;base64,...`)
+- `fileName` (optionnel) : Nom personnalisé (UUID si omis)
 
-**Response:**
-```json
-{
-  "success": true,
-  "status": "online",
-  "apiUrl": "http://localhost:3000",
-  "message": "Image Upload API is running",
-  "endpoints": {
-    "upload": "POST /upload - Upload an image to S3"
-  }
-}
+### 3. GET `/mcp/tools` - Liste les outils disponibles
+```bash
+curl http://localhost:3000/mcp/tools
 ```
 
-## Exemples
+Retourne les 3 outils disponibles avec leurs schémas OpenAPI.
 
-### Exemple 1: Upload avec Claude
-
-```
-Utilisateur: "Upload l'image screenshot.png sur S3 et donne-moi l'URL"
-
-Claude utilise l'outil uploadImage:
-- filePath: "./screenshot.png"
-- apiUrl: "https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app"
-
-Réponse: 
-"Votre image a été uploadée ici: https://hmzoo.s3.eu-west-1.amazonaws.com/images/abc123.png"
+### 4. GET `/mcp/status` - Statut de l'API
+```bash
+curl http://localhost:3000/mcp/status
 ```
 
-### Exemple 2: Vérifier le statut
+Vérifie que l'API est en ligne et affiche la config bucket.
 
-```
-Utilisateur: "L'API d'upload fonctionne-t-elle?"
-
-Claude utilise l'outil getApiStatus:
-- apiUrl: "https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app"
-
-Réponse:
-"Oui, l'API fonctionne parfaitement ✓"
+### 5. GET `/mcp/generate-url` - Génère une URL S3
+```bash
+curl "http://localhost:3000/mcp/generate-url?fileName=image.jpg"
 ```
 
-### Exemple 3: Générer URL S3
+Génère l'URL S3 d'une image **sans l'uploader**.
 
+## 🎯 Formats d'image supportés
+
+- JPEG (`image/jpeg`)
+- PNG (`image/png`)  
+- GIF (`image/gif`)
+- WebP (`image/webp`)
+
+**Limite de taille:** 5MB
+
+## 🔧 Configuration
+
+Variables d'environnement (`.env`):
 ```
-Utilisateur: "Quelle est l'URL S3 de mon-image.jpg?"
+AWS_REGION=eu-west-1
+AWS_S3_BUCKET_NAME=hmzoo
+AWS_S3_FOLDER=images
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+PORT=3000
+```
+
+## 🚀 Déploiement
+
+L'API est déployée sur Vercel:
+```
+https://imgs3-arzka7rwn-hmjs-projects-4e301036.vercel.app
+```
+
+Tous les exemples ci-dessus fonctionnent en remplaçant `http://localhost:3000` par l'URL de production.
 
 Claude utilise l'outil getImageUrl:
 - fileName: "mon-image.jpg"
