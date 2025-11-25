@@ -28,8 +28,8 @@ const TOOLS = [
       properties: {
         mode: {
           type: 'string',
-          enum: ['multipart', 'base64', 'url'],
-          description: 'Upload mode'
+          enum: ['base64', 'url'],
+          description: 'Upload mode: base64 for Base64 data, url for image URL'
         },
         image: {
           type: 'string',
@@ -66,7 +66,8 @@ const TOOLS = [
     description: 'Get the API status and configuration',
     inputSchema: {
       type: 'object',
-      properties: {}
+      properties: {},
+      required: []
     }
   }
 ];
@@ -142,7 +143,7 @@ async function uploadImage(args) {
       content: [
         {
           type: 'text',
-          text: 'Error: mode is required (multipart, base64, or url)'
+          text: 'Error: mode is required (base64 or url)'
         }
       ]
     };
@@ -177,13 +178,13 @@ async function uploadImage(args) {
         };
       }
       body.imageUrl = imageUrl;
-    } else if (mode === 'multipart') {
+    } else {
       return {
         isError: true,
         content: [
           {
             type: 'text',
-            text: 'Error: multipart mode not supported via MCP (use base64 or url instead)'
+            text: `Error: invalid mode "${mode}". Use "base64" or "url"`
           }
         ]
       };
