@@ -678,8 +678,185 @@ app.use((err, req, res, next) => {
   next();
 });
 
+// ============================================
+// POST / - MCP Protocol Endpoint (Claude compatibility)
+// ============================================
+// Route POST / to the MCP handler for Claude Desktop compatibility
+app.post('/', async (req, res) => {
+  try {
+    const { jsonrpc, method, params, id } = req.body;
+
+    if (jsonrpc !== '2.0') {
+      return res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32600, message: 'Invalid Request' },
+        id: id || null,
+      });
+    }
+
+    let result;
+
+    if (method === 'initialize') {
+      result = {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: {
+          name: 'imgs3-mcp-server',
+          version: '1.0.0',
+        },
+      };
+    } else if (method === 'tools/list') {
+      result = {
+        tools: [
+          {
+            name: 'uploadImage',
+            description: 'Upload une image vers S3 (3 modes: URL, base64 ou fichier local)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                imageUrl: {
+                  type: 'string',
+                  description: 'Mode 1: URL publique de l\'image à télécharger (ex: https://example.com/image.jpg)',
+                },
+                image: {
+                  type: 'string',
+                  description: 'Mode 2: Image en base64 ou data URI (ex: data:image/jpeg;base64,/9j/4AAQ...)',
+                },
+                filePath: {
+                  type: 'string',
+                  description: 'Mode 3: Chemin local du fichier (ex: /tmp/image.jpg) - convertir en base64',
+                },
+                fileName: {
+                  type: 'string',
+                  description: 'Nom personnalisé du fichier dans S3 (optionnel, UUID auto-généré sinon)',
+                },
+              },
+              required: [],
+            },
+          },
+          {
+            name: 'getImageUrl',
+            description: 'Génère l\'URL S3 d\'une image sans l\'uploader',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                fileName: {
+                  type: 'string',
+                  description: 'Nom du fichier',
+                },
+              },
+              required: ['fileName'],
+            },
+          },
+          {
+            name: 'getApiStatus',
+            description: 'Retourne le statut de l\'API',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+        ],
+      };
+    } else if (method === 'tools/call') {
+      const { name, arguments: args } = params;
+
+      if (name === 'uploadImage') {
+        const { imageUrl, image, filePath, fileName } = args;
+        let uploadData = {};
+
+        // Mode 1: URL
+        if (imageUrl) {
+          uploadData.imageUrl = imageUrl;
+        }
+        // Mode 2: Base64
+        else if (image) {
+          uploadData.image = image;
+        }
+        // Mode 3: FilePath
+        else if (filePath) {
+          try {
+            const fs = require('fs');
+            const fileBuffer = fs.readFileSync(filePath);
+            const base64 = fileBuffer.toString('base64');
+
+            // Determine MIME type from extension
+            const ext = path.extname(filePath).toLowerCase();
+            const mimeTypes = {
+              '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
+              '.png': 'image/png',
+              '.gif': 'image/gif',
+              '.webp': 'image/webp',
+            };
+            const mimeType = mimeTypes[ext] || 'image/jpeg';
+
+            uploadData.image = `data:${mimeType};base64,${base64}`;
+          } catch (err) {
+            throw new Error(`Failed to read file: ${err.message}`);
+          }
+        } else {
+          throw new Error('Either imageUrl, image (base64), or filePath must be provided');
+        }
+
+        // Add optional fileName
+        if (fileName) {
+          uploadData.fileName = fileName;
+        }
+
+        // Upload via internal /upload endpoint
+        try {
+          const uploadResponse = await performUpload(uploadData);
+          result = {
+            message: 'Image uploadée avec succès!',
+            url: uploadResponse.url,
+            fileName: uploadResponse.fileName,
+            s3Key: uploadResponse.s3Key,
+          };
+        } catch (err) {
+          throw new Error(`Upload failed: ${err.message}`);
+        }
+      } else if (name === 'getImageUrl') {
+        const { fileName } = args;
+        if (!fileName) {
+          throw new Error('fileName is required for getImageUrl');
+        }
+        result = {
+          url: generateImageUrl(fileName),
+          fileName: fileName,
+        };
+      } else if (name === 'getApiStatus') {
+        result = {
+          status: 'online',
+          bucket: process.env.AWS_S3_BUCKET_NAME,
+          region: process.env.AWS_REGION,
+          folder: process.env.AWS_S3_FOLDER || 'root',
+        };
+      } else {
+        throw new Error(`Unknown tool: ${name}`);
+      }
+    } else {
+      throw new Error(`Unknown method: ${method}`);
+    }
+
+    res.json({
+      jsonrpc: '2.0',
+      result,
+      id,
+    });
+  } catch (err) {
+    console.error('MCP Error:', err);
+    res.status(400).json({
+      jsonrpc: '2.0',
+      error: { code: -32603, message: err.message },
+      id: req.body?.id || null,
+    });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   console.log(`Upload images to: http://localhost:${PORT}/upload`);
+  console.log(`MCP endpoint: http://localhost:${PORT}/ (POST)`);
 });
