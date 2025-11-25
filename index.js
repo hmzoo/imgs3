@@ -132,6 +132,95 @@ const s3Client = new S3Client({
 const storage = multer.memoryStorage();
 
 // ============================================
+// Core Upload Function (Reusable)
+// ============================================
+/**
+ * Core S3 upload function - used by both HTTP and MCP endpoints
+ * @param {Object} uploadData - Upload data with image, imageUrl, or filePath
+ * @param {string} uploadData.image - Base64 or data URI image
+ * @param {string} uploadData.imageUrl - Public URL of image to download
+ * @param {string} uploadData.filePath - Local file path
+ * @param {string} uploadData.fileName - Custom file name (optional)
+ * @returns {Promise<{url, fileName, s3Key}>}
+ */
+async function performUpload(uploadData) {
+  let buffer;
+  let contentType;
+  let fileName;
+
+  // Parse upload data based on what's provided
+  if (uploadData.image) {
+    // Mode: Base64 or data URI
+    const { buffer: base64Buffer, contentType: base64ContentType } = decodeBase64Image(uploadData.image);
+    buffer = base64Buffer;
+    contentType = base64ContentType;
+
+    if (uploadData.fileName) {
+      fileName = uploadData.fileName;
+    } else {
+      const uniqueId = uuidv4();
+      const fileExtension = base64ContentType === 'image/jpeg' ? '.jpg' : 
+                           base64ContentType === 'image/png' ? '.png' :
+                           base64ContentType === 'image/gif' ? '.gif' : '.webp';
+      fileName = `${uniqueId}${fileExtension}`;
+    }
+  } else if (uploadData.imageUrl) {
+    // Mode: Download from URL
+    const { buffer: urlBuffer, contentType: urlContentType } = await downloadImageFromUrl(uploadData.imageUrl);
+    buffer = urlBuffer;
+    contentType = urlContentType;
+
+    if (uploadData.fileName) {
+      fileName = uploadData.fileName;
+    } else {
+      const uniqueId = uuidv4();
+      fileName = `${uniqueId}.jpg`;
+    }
+  } else if (uploadData.filePath) {
+    // Mode: Local file
+    const fs = require('fs');
+    const fileBuffer = fs.readFileSync(uploadData.filePath);
+    buffer = fileBuffer;
+    
+    const ext = path.extname(uploadData.filePath).toLowerCase();
+    const mimeTypes = {
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+      '.gif': 'image/gif', '.webp': 'image/webp',
+    };
+    contentType = mimeTypes[ext] || 'image/jpeg';
+
+    if (uploadData.fileName) {
+      fileName = uploadData.fileName;
+    } else {
+      const uniqueId = uuidv4();
+      fileName = `${uniqueId}${ext}`;
+    }
+  } else {
+    throw new Error('Either image, imageUrl, or filePath must be provided');
+  }
+
+  // Upload to S3
+  const s3Key = buildS3Key(fileName);
+  const uploadParams = {
+    Bucket: process.env.AWS_S3_BUCKET_NAME,
+    Key: s3Key,
+    Body: buffer,
+    ContentType: contentType,
+  };
+
+  await s3Client.send(new PutObjectCommand(uploadParams));
+
+  // Generate URL for the uploaded image
+  const imageUrl = generateImageUrl(fileName);
+
+  return {
+    url: imageUrl,
+    fileName: fileName,
+    s3Key: s3Key,
+  };
+}
+
+// ============================================
 // API Routes
 // ============================================
 
@@ -268,14 +357,13 @@ const uploadWithFields = multer({
 
 app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
   try {
-    let buffer;
-    let contentType;
+    let uploadData = {};
     let fileName;
 
     // Mode 1: Multipart file upload
     if (req.file) {
-      buffer = req.file.buffer;
-      contentType = req.file.mimetype;
+      const buffer = req.file.buffer;
+      const contentType = req.file.mimetype;
       const originalFileName = req.file.originalname;
       
       // Use custom fileName from fields if provided, otherwise generate UUID
@@ -289,43 +377,36 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
         const fileExtension = path.extname(originalFileName);
         fileName = `${uniqueId}${fileExtension}`;
       }
-    }
-    // Mode 2: JSON with base64 image
-    else if (req.body?.image) {
-      const { image, fileName: customFileName } = req.body;
-      
-      // Decode base64 image
-      const { buffer: base64Buffer, contentType: base64ContentType } = decodeBase64Image(image);
-      buffer = base64Buffer;
-      contentType = base64ContentType;
 
-      // Generate unique ID or use custom name
-      if (customFileName) {
-        fileName = customFileName;
-      } else {
-        const uniqueId = uuidv4();
-        const fileExtension = contentType === 'image/jpeg' ? '.jpg' : 
-                             contentType === 'image/png' ? '.png' :
-                             contentType === 'image/gif' ? '.gif' : '.webp';
-        fileName = `${uniqueId}${fileExtension}`;
-      }
-    }
-    // Mode 3: JSON with imageUrl
-    else if (req.body?.imageUrl) {
-      const { imageUrl, fileName: customFileName } = req.body;
-      
-      // Download image from URL
-      const { buffer: urlBuffer, contentType: urlContentType } = await downloadImageFromUrl(imageUrl);
-      buffer = urlBuffer;
-      contentType = urlContentType;
+      // For multipart, we need to handle directly since we already have the buffer
+      const s3Key = buildS3Key(fileName);
+      const uploadParams = {
+        Bucket: process.env.AWS_S3_BUCKET_NAME,
+        Key: s3Key,
+        Body: buffer,
+        ContentType: contentType,
+      };
 
-      // Generate unique ID or use custom name
-      const uniqueId = customFileName || uuidv4();
-      const fileExtension = customFileName ? (path.extname(customFileName) || '.jpg') : '.jpg';
-      fileName = customFileName ? uniqueId : `${uniqueId}${fileExtension}`;
+      await s3Client.send(new PutObjectCommand(uploadParams));
+      const imageUrl = generateImageUrl(fileName);
+
+      return res.status(200).json({
+        message: 'Image uploaded successfully',
+        url: imageUrl,
+        fileName: fileName,
+        s3Key: s3Key,
+        source: 'multipart-upload'
+      });
     }
-    // Mode 4: No valid input
-    else {
+    
+    // Mode 2 & 3: JSON with base64 or imageUrl - use performUpload
+    if (req.body?.image) {
+      uploadData.image = req.body.image;
+      uploadData.fileName = req.body?.fileName;
+    } else if (req.body?.imageUrl) {
+      uploadData.imageUrl = req.body.imageUrl;
+      uploadData.fileName = req.body?.fileName;
+    } else {
       return res.status(400).json({ 
         error: 'No image provided',
         supported_methods: [
@@ -336,26 +417,15 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
       });
     }
 
-    // Upload to S3
-    const s3Key = buildS3Key(fileName);
-    const uploadParams = {
-      Bucket: process.env.AWS_S3_BUCKET_NAME,
-      Key: s3Key,
-      Body: buffer,
-      ContentType: contentType,
-    };
-
-    await s3Client.send(new PutObjectCommand(uploadParams));
-
-    // Generate URL for the uploaded image
-    const imageUrl = generateImageUrl(fileName);
+    // Use performUpload for JSON modes
+    const uploadResponse = await performUpload(uploadData);
 
     res.status(200).json({
       message: 'Image uploaded successfully',
-      url: imageUrl,
-      fileName: fileName,
-      s3Key: s3Key,
-      source: req.file ? 'multipart-upload' : (req.body?.image ? 'base64-upload' : 'url-upload')
+      url: uploadResponse.url,
+      fileName: uploadResponse.fileName,
+      s3Key: uploadResponse.s3Key,
+      source: req.body?.image ? 'base64-upload' : 'url-upload'
     });
   } catch (error) {
     console.error('Upload error:', error);
