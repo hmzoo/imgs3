@@ -401,23 +401,28 @@ app.post('/_mcp', async (req, res) => {
         tools: [
           {
             name: 'uploadImage',
-            description: 'Upload une image vers S3 (depuis URL, base64 ou fichier)',
+            description: 'Upload une image vers S3 (3 modes: URL, base64 ou fichier local)',
             inputSchema: {
               type: 'object',
               properties: {
                 imageUrl: {
                   type: 'string',
-                  description: 'URL publique de l\'image à télécharger',
+                  description: 'Mode 1: URL publique de l\'image à télécharger (ex: https://example.com/image.jpg)',
                 },
                 image: {
                   type: 'string',
-                  description: 'Image en base64 ou data URI (data:image/type;base64,...)',
+                  description: 'Mode 2: Image en base64 ou data URI (ex: data:image/jpeg;base64,/9j/4AAQ...)',
+                },
+                filePath: {
+                  type: 'string',
+                  description: 'Mode 3: Chemin local du fichier (ex: /tmp/image.jpg) - convertir en base64',
                 },
                 fileName: {
                   type: 'string',
-                  description: 'Nom du fichier personnalisé (optionnel, UUID si omis)',
+                  description: 'Nom personnalisé du fichier dans S3 (optionnel, UUID auto-généré sinon)',
                 },
               },
+              required: [],
             },
           },
           {
@@ -448,16 +453,17 @@ app.post('/_mcp', async (req, res) => {
       const { name, arguments: args } = params;
 
       if (name === 'uploadImage') {
-        const { imageUrl, image, fileName } = args;
+        const { imageUrl, image, filePath, fileName } = args;
 
-        if (!imageUrl && !image) {
+        // Vérifier qu'un mode est fourni
+        if (!imageUrl && !image && !filePath) {
           return res.json({
             jsonrpc: '2.0',
             result: {
               content: [
                 {
                   type: 'text',
-                  text: 'Erreur: Veuillez fournir soit "imageUrl" soit "image"',
+                  text: 'Erreur: Fournissez soit "imageUrl", soit "image" (base64), soit "filePath"',
                 },
               ],
               isError: true,
@@ -466,11 +472,56 @@ app.post('/_mcp', async (req, res) => {
           });
         }
 
-        const uploadData = {
-          ...(imageUrl && { imageUrl }),
-          ...(image && { image }),
-          ...(fileName && { fileName }),
-        };
+        let uploadData = { ...(fileName && { fileName }) };
+
+        // Mode 1: URL
+        if (imageUrl) {
+          uploadData.imageUrl = imageUrl;
+        }
+        // Mode 2: Base64
+        else if (image) {
+          uploadData.image = image;
+        }
+        // Mode 3: Fichier local (convertir en base64)
+        else if (filePath) {
+          try {
+            const fs = require('fs');
+            const fileBuffer = fs.readFileSync(filePath);
+            const base64 = fileBuffer.toString('base64');
+            
+            // Détecter le type MIME
+            const ext = path.extname(filePath).toLowerCase();
+            const mimeTypes = {
+              '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
+              '.png': 'image/png',
+              '.gif': 'image/gif',
+              '.webp': 'image/webp',
+            };
+            const mimeType = mimeTypes[ext] || 'image/jpeg';
+            
+            uploadData.image = `data:${mimeType};base64,${base64}`;
+            
+            // Utiliser le nom du fichier si pas de fileName personnalisé
+            if (!fileName) {
+              uploadData.fileName = path.basename(filePath);
+            }
+          } catch (error) {
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Erreur: Impossible de lire le fichier "${filePath}": ${error.message}`,
+                  },
+                ],
+                isError: true,
+              },
+              id,
+            });
+          }
+        }
 
         // Call internal upload endpoint
         const uploadResponse = await fetch(`http://localhost:${PORT}/upload`, {

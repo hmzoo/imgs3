@@ -177,11 +177,46 @@ Après modification du fichier de config, redémarrez Claude Desktop. Les 3 outi
 ```
 Utilisateur: "Upload cette image sur S3: https://example.com/image.jpg"
 
-Claude utilise l'outil uploadImage:
+Claude utilise l'outil uploadImage (Mode URL):
 - imageUrl: "https://example.com/image.jpg"
 - fileName: "ma-nouvelle-image.jpg"
 
 Réponse: "Image uploadée avec succès! URL: https://..."
+```
+
+**Les 3 modes disponibles pour Claude :**
+
+1. **Mode URL** - Télécharger depuis une URL publique
+```json
+{
+  "name": "uploadImage",
+  "arguments": {
+    "imageUrl": "https://example.com/image.jpg",
+    "fileName": "optional-custom-name.jpg"
+  }
+}
+```
+
+2. **Mode Base64** - Envoyer directement en base64 (avec data URI)
+```json
+{
+  "name": "uploadImage",
+  "arguments": {
+    "image": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
+    "fileName": "optional-custom-name.jpg"
+  }
+}
+```
+
+3. **Mode FilePath** - Convertir un fichier local en base64
+```json
+{
+  "name": "uploadImage",
+  "arguments": {
+    "filePath": "/chemin/vers/image.jpg",
+    "fileName": "optional-custom-name.jpg"
+  }
+}
 ```
 
 ### 📡 Appels MCP directs (debug)
