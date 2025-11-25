@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "imgs3": {
+      "command": "node",
+      "args": ["path/to/imgs3/claude-mcp-server.js"],
+      "env": {
+        "API_URL": "http://localhost:3000",
+        "MCP_PORT": "3001"
+      }
+    }
+  }
+}

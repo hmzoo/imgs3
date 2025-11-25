@@ -121,3 +121,56 @@ https://votre-domaine.vercel.app
 ```
 
 Tous les exemples ci-dessus fonctionnent en remplaçant `http://localhost:3000` par votre URL de déploiement.
+
+## 🤖 Connexion à Claude Desktop
+
+Pour utiliser cette API avec Claude Desktop via le protocole MCP :
+
+### 1. Lancer les deux serveurs
+
+**Terminal 1 - API Express** (en local ou Vercel):
+```bash
+npm start
+```
+
+**Terminal 2 - Serveur MCP** (local seulement):
+```bash
+npm run mcp:server
+```
+
+### 2. Configurer Claude Desktop
+
+Éditez `~/.claude/claude.json`:
+```json
+{
+  "mcpServers": {
+    "imgs3": {
+      "command": "node",
+      "args": ["/chemin/vers/imgs3/claude-mcp-server.js"],
+      "env": {
+        "API_URL": "http://localhost:3000",
+        "MCP_PORT": "3001"
+      }
+    }
+  }
+}
+```
+
+### 3. Redémarrer Claude Desktop
+
+Après modification du fichier de config, redémarrez Claude Desktop. Les 3 outils seront disponibles :
+- `uploadImage` - Upload une image
+- `getImageUrl` - Génère une URL S3
+- `getApiStatus` - Vérifie le statut
+
+### 🚀 Exemple d'utilisation avec Claude
+
+```
+Utilisateur: "Upload cette image sur S3: https://example.com/image.jpg"
+
+Claude utilise l'outil uploadImage:
+- imageUrl: "https://example.com/image.jpg"
+- fileName: "ma-nouvelle-image.jpg"
+
+Réponse: "Image uploadée avec succès! URL: https://..."
+```
