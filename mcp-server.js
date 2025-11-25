@@ -4,15 +4,21 @@
  * MCP Server - Standalone Image Upload Server
  * Uses stdio transport (stdin/stdout)
  * Run with: node mcp-server.js
+ * 
+ * Configuration:
+ * - Set MCP_API_BASE_URL in .env file
+ * - Default: http://localhost:3000
+ * - For production: use your Vercel API URL
  */
 
+require('dotenv').config();
 const fetch = require('node-fetch');
 
 // ============================================
 // Configuration
 // ============================================
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
+const API_BASE_URL = process.env.MCP_API_BASE_URL || 'http://localhost:3000';
 const TOOLS = [
   {
     name: 'uploadImage',
