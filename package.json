@@ -13,8 +13,10 @@
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.937.0",
+    "@smithy/node-http-handler": "^4.4.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "https-proxy-agent": "^7.0.6",
     "multer": "^2.0.2",
     "node-fetch": "^2.7.0",
     "uuid": "^9.0.0"

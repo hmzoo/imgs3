@@ -5,6 +5,8 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fetch = require('node-fetch');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -73,13 +75,26 @@ async function downloadImageFromUrl(imageUrl) {
 // AWS S3 Configuration
 // ============================================
 
-const s3Client = new S3Client({
+// Configure proxy support (optional)
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+const s3Config = {
   region: process.env.AWS_REGION,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
-});
+};
+
+// Add proxy agent if proxy is configured
+if (proxyUrl) {
+  console.log(`🔌 Proxy detected: ${proxyUrl}`);
+  const proxyAgent = new HttpsProxyAgent(proxyUrl);
+  s3Config.requestHandler = new NodeHttpHandler({
+    httpsAgent: proxyAgent
+  });
+}
+
+const s3Client = new S3Client(s3Config);
 
 const storage = multer.memoryStorage();
 
