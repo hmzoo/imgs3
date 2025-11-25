@@ -366,6 +366,251 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
   }
 });
 
+// ============================================
+// MCP JSON-RPC Endpoint (Claude Protocol)
+// ============================================
+
+/**
+ * POST /_mcp - Handle Claude MCP protocol (JSON-RPC)
+ */
+app.post('/_mcp', async (req, res) => {
+  try {
+    const { jsonrpc, method, params, id } = req.body;
+
+    if (jsonrpc !== '2.0') {
+      return res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32600, message: 'Invalid Request' },
+        id: id || null,
+      });
+    }
+
+    let result;
+
+    if (method === 'initialize') {
+      result = {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: {
+          name: 'imgs3-mcp-server',
+          version: '1.0.0',
+        },
+      };
+    } else if (method === 'tools/list') {
+      result = {
+        tools: [
+          {
+            name: 'uploadImage',
+            description: 'Upload une image vers S3 (depuis URL, base64 ou fichier)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                imageUrl: {
+                  type: 'string',
+                  description: 'URL publique de l\'image à télécharger',
+                },
+                image: {
+                  type: 'string',
+                  description: 'Image en base64 ou data URI (data:image/type;base64,...)',
+                },
+                fileName: {
+                  type: 'string',
+                  description: 'Nom du fichier personnalisé (optionnel, UUID si omis)',
+                },
+              },
+            },
+          },
+          {
+            name: 'getImageUrl',
+            description: 'Génère l\'URL S3 d\'une image sans l\'uploader',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                fileName: {
+                  type: 'string',
+                  description: 'Nom du fichier',
+                },
+              },
+              required: ['fileName'],
+            },
+          },
+          {
+            name: 'getApiStatus',
+            description: 'Vérifie le statut de l\'API',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+        ],
+      };
+    } else if (method === 'tools/call') {
+      const { name, arguments: args } = params;
+
+      if (name === 'uploadImage') {
+        const { imageUrl, image, fileName } = args;
+
+        if (!imageUrl && !image) {
+          return res.json({
+            jsonrpc: '2.0',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Erreur: Veuillez fournir soit "imageUrl" soit "image"',
+                },
+              ],
+              isError: true,
+            },
+            id,
+          });
+        }
+
+        const uploadData = {
+          ...(imageUrl && { imageUrl }),
+          ...(image && { image }),
+          ...(fileName && { fileName }),
+        };
+
+        // Call internal upload endpoint
+        const uploadResponse = await fetch(`http://localhost:${PORT}/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(uploadData),
+        });
+
+        const uploadResult = await uploadResponse.json();
+
+        if (!uploadResponse.ok) {
+          return res.json({
+            jsonrpc: '2.0',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: `Erreur d'upload: ${uploadResult.error || uploadResult.details}`,
+                },
+              ],
+              isError: true,
+            },
+            id,
+          });
+        }
+
+        result = {
+          content: [
+            {
+              type: 'text',
+              text: `Image uploadée avec succès!\nURL: ${uploadResult.url}\nNom: ${uploadResult.fileName}`,
+            },
+          ],
+        };
+      } else if (name === 'getImageUrl') {
+        const { fileName } = args;
+
+        if (!fileName) {
+          return res.json({
+            jsonrpc: '2.0',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Erreur: fileName est requis',
+                },
+              ],
+              isError: true,
+            },
+            id,
+          });
+        }
+
+        const urlResponse = await fetch(
+          `http://localhost:${PORT}/mcp/generate-url?fileName=${encodeURIComponent(fileName)}`
+        );
+        const urlResult = await urlResponse.json();
+
+        if (!urlResponse.ok) {
+          return res.json({
+            jsonrpc: '2.0',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: `Erreur: ${urlResult.error}`,
+                },
+              ],
+              isError: true,
+            },
+            id,
+          });
+        }
+
+        result = {
+          content: [
+            {
+              type: 'text',
+              text: `URL S3: ${urlResult.url}\nClé S3: ${urlResult.s3Key}`,
+            },
+          ],
+        };
+      } else if (name === 'getApiStatus') {
+        const statusResponse = await fetch(`http://localhost:${PORT}/mcp/status`);
+        const statusResult = await statusResponse.json();
+
+        if (!statusResponse.ok) {
+          return res.json({
+            jsonrpc: '2.0',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Erreur: Impossible de contacter l\'API',
+                },
+              ],
+              isError: true,
+            },
+            id,
+          });
+        }
+
+        result = {
+          content: [
+            {
+              type: 'text',
+              text: `API Status: ${statusResult.status}\nBucket: ${statusResult.bucket}\nRégion: ${statusResult.region}`,
+            },
+          ],
+        };
+      } else {
+        return res.json({
+          jsonrpc: '2.0',
+          error: { code: -32601, message: `Outil inconnu: ${name}` },
+          id,
+        });
+      }
+    } else {
+      return res.json({
+        jsonrpc: '2.0',
+        error: { code: -32601, message: `Méthode inconnue: ${method}` },
+        id,
+      });
+    }
+
+    res.json({
+      jsonrpc: '2.0',
+      result,
+      id,
+    });
+  } catch (error) {
+    console.error('MCP error:', error);
+    res.json({
+      jsonrpc: '2.0',
+      error: { code: -32700, message: 'Parse error' },
+      id: req.body?.id || null,
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {

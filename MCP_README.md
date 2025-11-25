@@ -126,17 +126,13 @@ Tous les exemples ci-dessus fonctionnent en remplaçant `http://localhost:3000` 
 
 Pour utiliser cette API avec Claude Desktop via le protocole MCP :
 
-### 1. Lancer les deux serveurs
+### 1. Lancer l'API Express
 
-**Terminal 1 - API Express** (en local ou Vercel):
 ```bash
 npm start
 ```
 
-**Terminal 2 - Serveur MCP** (local seulement):
-```bash
-npm run mcp:server
-```
+Le serveur démarre sur `http://localhost:3000` avec support MCP natif sur `http://localhost:3000/_mcp`
 
 ### 2. Configurer Claude Desktop
 
@@ -145,12 +141,25 @@ npm run mcp:server
 {
   "mcpServers": {
     "imgs3": {
-      "command": "node",
-      "args": ["/chemin/vers/imgs3/claude-mcp-server.js"],
+      "command": "npx",
+      "args": ["node", "/chemin/vers/imgs3/index.js"],
       "env": {
-        "API_URL": "http://localhost:3000",
-        "MCP_PORT": "3001"
+        "API_URL": "http://localhost:3000"
       }
+    }
+  }
+}
+```
+
+**OU** si vous voulez utiliser directement le serveur Express déjà lancé :
+
+```json
+{
+  "mcpServers": {
+    "imgs3": {
+      "command": "curl",
+      "args": ["--unix-socket", "/tmp/imgs3.sock", "http://localhost/_mcp"],
+      "env": {}
     }
   }
 }
@@ -173,4 +182,33 @@ Claude utilise l'outil uploadImage:
 - fileName: "ma-nouvelle-image.jpg"
 
 Réponse: "Image uploadée avec succès! URL: https://..."
+```
+
+### 📡 Appels MCP directs (debug)
+
+Vous pouvez tester le protocole MCP directement :
+
+```bash
+# Initialiser
+curl -X POST http://localhost:3000/_mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+
+# Lister les outils
+curl -X POST http://localhost:3000/_mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
+
+# Appeler un outil
+curl -X POST http://localhost:3000/_mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0",
+    "method":"tools/call",
+    "params":{
+      "name":"uploadImage",
+      "arguments":{"imageUrl":"https://example.com/image.jpg"}
+    },
+    "id":3
+  }'
 ```

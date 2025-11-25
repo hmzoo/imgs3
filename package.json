@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test:s3": "node test-s3-access.js",
-    "mcp:server": "node claude-mcp-server.js"
+    "test:s3": "node test-s3-access.js"
   },
   "keywords": [],
   "author": "",
