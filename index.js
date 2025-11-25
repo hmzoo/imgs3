@@ -367,13 +367,13 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
 });
 
 // ============================================
-// MCP JSON-RPC Endpoint (Claude Protocol)
+// MCP Handler Function (Shared Logic)
 // ============================================
-
 /**
- * POST /_mcp - Handle Claude MCP protocol (JSON-RPC)
+ * Handle MCP JSON-RPC 2.0 protocol requests
+ * Supports: initialize, tools/list, tools/call, notifications/*
  */
-app.post('/_mcp', async (req, res) => {
+async function handleMCPRequest(req, res) {
   try {
     const { jsonrpc, method, params, id } = req.body;
 
@@ -385,311 +385,11 @@ app.post('/_mcp', async (req, res) => {
       });
     }
 
-    let result;
-
-    if (method === 'initialize') {
-      result = {
-        protocolVersion: '2024-11-05',
-        capabilities: { tools: {} },
-        serverInfo: {
-          name: 'imgs3-mcp-server',
-          version: '1.0.0',
-        },
-      };
-    } else if (method === 'tools/list') {
-      result = {
-        tools: [
-          {
-            name: 'uploadImage',
-            description: 'Upload une image vers S3 (3 modes: URL, base64 ou fichier local)',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                imageUrl: {
-                  type: 'string',
-                  description: 'Mode 1: URL publique de l\'image à télécharger (ex: https://example.com/image.jpg)',
-                },
-                image: {
-                  type: 'string',
-                  description: 'Mode 2: Image en base64 ou data URI (ex: data:image/jpeg;base64,/9j/4AAQ...)',
-                },
-                filePath: {
-                  type: 'string',
-                  description: 'Mode 3: Chemin local du fichier (ex: /tmp/image.jpg) - convertir en base64',
-                },
-                fileName: {
-                  type: 'string',
-                  description: 'Nom personnalisé du fichier dans S3 (optionnel, UUID auto-généré sinon)',
-                },
-              },
-              required: [],
-            },
-          },
-          {
-            name: 'getImageUrl',
-            description: 'Génère l\'URL S3 d\'une image sans l\'uploader',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                fileName: {
-                  type: 'string',
-                  description: 'Nom du fichier',
-                },
-              },
-              required: ['fileName'],
-            },
-          },
-          {
-            name: 'getApiStatus',
-            description: 'Vérifie le statut de l\'API',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
-          },
-        ],
-      };
-    } else if (method === 'tools/call') {
-      const { name, arguments: args } = params;
-
-      if (name === 'uploadImage') {
-        const { imageUrl, image, filePath, fileName } = args;
-
-        // Vérifier qu'un mode est fourni
-        if (!imageUrl && !image && !filePath) {
-          return res.json({
-            jsonrpc: '2.0',
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: 'Erreur: Fournissez soit "imageUrl", soit "image" (base64), soit "filePath"',
-                },
-              ],
-              isError: true,
-            },
-            id,
-          });
-        }
-
-        let uploadData = { ...(fileName && { fileName }) };
-
-        // Mode 1: URL
-        if (imageUrl) {
-          uploadData.imageUrl = imageUrl;
-        }
-        // Mode 2: Base64
-        else if (image) {
-          uploadData.image = image;
-        }
-        // Mode 3: Fichier local (convertir en base64)
-        else if (filePath) {
-          try {
-            const fs = require('fs');
-            const fileBuffer = fs.readFileSync(filePath);
-            const base64 = fileBuffer.toString('base64');
-            
-            // Détecter le type MIME
-            const ext = path.extname(filePath).toLowerCase();
-            const mimeTypes = {
-              '.jpg': 'image/jpeg',
-              '.jpeg': 'image/jpeg',
-              '.png': 'image/png',
-              '.gif': 'image/gif',
-              '.webp': 'image/webp',
-            };
-            const mimeType = mimeTypes[ext] || 'image/jpeg';
-            
-            uploadData.image = `data:${mimeType};base64,${base64}`;
-            
-            // Utiliser le nom du fichier si pas de fileName personnalisé
-            if (!fileName) {
-              uploadData.fileName = path.basename(filePath);
-            }
-          } catch (error) {
-            return res.json({
-              jsonrpc: '2.0',
-              result: {
-                content: [
-                  {
-                    type: 'text',
-                    text: `Erreur: Impossible de lire le fichier "${filePath}": ${error.message}`,
-                  },
-                ],
-                isError: true,
-              },
-              id,
-            });
-          }
-        }
-
-        // Call internal upload endpoint
-        const uploadResponse = await fetch(`http://localhost:${PORT}/upload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(uploadData),
-        });
-
-        const uploadResult = await uploadResponse.json();
-
-        if (!uploadResponse.ok) {
-          return res.json({
-            jsonrpc: '2.0',
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: `Erreur d'upload: ${uploadResult.error || uploadResult.details}`,
-                },
-              ],
-              isError: true,
-            },
-            id,
-          });
-        }
-
-        result = {
-          content: [
-            {
-              type: 'text',
-              text: `Image uploadée avec succès!\nURL: ${uploadResult.url}\nNom: ${uploadResult.fileName}`,
-            },
-          ],
-        };
-      } else if (name === 'getImageUrl') {
-        const { fileName } = args;
-
-        if (!fileName) {
-          return res.json({
-            jsonrpc: '2.0',
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: 'Erreur: fileName est requis',
-                },
-              ],
-              isError: true,
-            },
-            id,
-          });
-        }
-
-        const urlResponse = await fetch(
-          `http://localhost:${PORT}/mcp/generate-url?fileName=${encodeURIComponent(fileName)}`
-        );
-        const urlResult = await urlResponse.json();
-
-        if (!urlResponse.ok) {
-          return res.json({
-            jsonrpc: '2.0',
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: `Erreur: ${urlResult.error}`,
-                },
-              ],
-              isError: true,
-            },
-            id,
-          });
-        }
-
-        result = {
-          content: [
-            {
-              type: 'text',
-              text: `URL S3: ${urlResult.url}\nClé S3: ${urlResult.s3Key}`,
-            },
-          ],
-        };
-      } else if (name === 'getApiStatus') {
-        const statusResponse = await fetch(`http://localhost:${PORT}/mcp/status`);
-        const statusResult = await statusResponse.json();
-
-        if (!statusResponse.ok) {
-          return res.json({
-            jsonrpc: '2.0',
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: 'Erreur: Impossible de contacter l\'API',
-                },
-              ],
-              isError: true,
-            },
-            id,
-          });
-        }
-
-        result = {
-          content: [
-            {
-              type: 'text',
-              text: `API Status: ${statusResult.status}\nBucket: ${statusResult.bucket}\nRégion: ${statusResult.region}`,
-            },
-          ],
-        };
-      } else {
-        return res.json({
-          jsonrpc: '2.0',
-          error: { code: -32601, message: `Outil inconnu: ${name}` },
-          id,
-        });
-      }
-    } else {
+    // Silently handle notifications (they don't expect a response)
+    if (method && method.startsWith('notifications/')) {
       return res.json({
         jsonrpc: '2.0',
-        error: { code: -32601, message: `Méthode inconnue: ${method}` },
-        id,
-      });
-    }
-
-    res.json({
-      jsonrpc: '2.0',
-      result,
-      id,
-    });
-  } catch (error) {
-    console.error('MCP error:', error);
-    res.json({
-      jsonrpc: '2.0',
-      error: { code: -32700, message: 'Parse error' },
-      id: req.body?.id || null,
-    });
-  }
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File size exceeds 5MB limit' });
-    }
-    return res.status(400).json({ error: err.message });
-  }
-  
-  if (err) {
-    return res.status(400).json({ error: err.message });
-  }
-  
-  next();
-});
-
-// ============================================
-// POST / - MCP Protocol Endpoint (Claude compatibility)
-// ============================================
-// Route POST / to the MCP handler for Claude Desktop compatibility
-app.post('/', async (req, res) => {
-  try {
-    const { jsonrpc, method, params, id } = req.body;
-
-    if (jsonrpc !== '2.0') {
-      return res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32600, message: 'Invalid Request' },
+        result: null,
         id: id || null,
       });
     }
@@ -716,19 +416,19 @@ app.post('/', async (req, res) => {
               properties: {
                 imageUrl: {
                   type: 'string',
-                  description: 'Mode 1: URL publique de l\'image à télécharger (ex: https://example.com/image.jpg)',
+                  description: 'Mode 1: URL publique de l\'image à télécharger',
                 },
                 image: {
                   type: 'string',
-                  description: 'Mode 2: Image en base64 ou data URI (ex: data:image/jpeg;base64,/9j/4AAQ...)',
+                  description: 'Mode 2: Image en base64 ou data URI',
                 },
                 filePath: {
                   type: 'string',
-                  description: 'Mode 3: Chemin local du fichier (ex: /tmp/image.jpg) - convertir en base64',
+                  description: 'Mode 3: Chemin local du fichier (converti en base64)',
                 },
                 fileName: {
                   type: 'string',
-                  description: 'Nom personnalisé du fichier dans S3 (optionnel, UUID auto-généré sinon)',
+                  description: 'Nom personnalisé (optionnel, UUID auto-généré sinon)',
                 },
               },
               required: [],
@@ -736,14 +436,11 @@ app.post('/', async (req, res) => {
           },
           {
             name: 'getImageUrl',
-            description: 'Génère l\'URL S3 d\'une image sans l\'uploader',
+            description: 'Génère l\'URL S3 d\'une image',
             inputSchema: {
               type: 'object',
               properties: {
-                fileName: {
-                  type: 'string',
-                  description: 'Nom du fichier',
-                },
+                fileName: { type: 'string', description: 'Nom du fichier' },
               },
               required: ['fileName'],
             },
@@ -751,10 +448,7 @@ app.post('/', async (req, res) => {
           {
             name: 'getApiStatus',
             description: 'Retourne le statut de l\'API',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
+            inputSchema: { type: 'object', properties: {} },
           },
         ],
       };
@@ -765,32 +459,21 @@ app.post('/', async (req, res) => {
         const { imageUrl, image, filePath, fileName } = args;
         let uploadData = {};
 
-        // Mode 1: URL
         if (imageUrl) {
           uploadData.imageUrl = imageUrl;
-        }
-        // Mode 2: Base64
-        else if (image) {
+        } else if (image) {
           uploadData.image = image;
-        }
-        // Mode 3: FilePath
-        else if (filePath) {
+        } else if (filePath) {
           try {
             const fs = require('fs');
             const fileBuffer = fs.readFileSync(filePath);
             const base64 = fileBuffer.toString('base64');
-
-            // Determine MIME type from extension
             const ext = path.extname(filePath).toLowerCase();
             const mimeTypes = {
-              '.jpg': 'image/jpeg',
-              '.jpeg': 'image/jpeg',
-              '.png': 'image/png',
-              '.gif': 'image/gif',
-              '.webp': 'image/webp',
+              '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+              '.gif': 'image/gif', '.webp': 'image/webp',
             };
             const mimeType = mimeTypes[ext] || 'image/jpeg';
-
             uploadData.image = `data:${mimeType};base64,${base64}`;
           } catch (err) {
             throw new Error(`Failed to read file: ${err.message}`);
@@ -799,12 +482,8 @@ app.post('/', async (req, res) => {
           throw new Error('Either imageUrl, image (base64), or filePath must be provided');
         }
 
-        // Add optional fileName
-        if (fileName) {
-          uploadData.fileName = fileName;
-        }
+        if (fileName) uploadData.fileName = fileName;
 
-        // Upload via internal /upload endpoint
         try {
           const uploadResponse = await performUpload(uploadData);
           result = {
@@ -818,12 +497,10 @@ app.post('/', async (req, res) => {
         }
       } else if (name === 'getImageUrl') {
         const { fileName } = args;
-        if (!fileName) {
-          throw new Error('fileName is required for getImageUrl');
-        }
+        if (!fileName) throw new Error('fileName is required');
         result = {
           url: generateImageUrl(fileName),
-          fileName: fileName,
+          fileName,
         };
       } else if (name === 'getApiStatus') {
         result = {
@@ -852,7 +529,38 @@ app.post('/', async (req, res) => {
       id: req.body?.id || null,
     });
   }
+}
+
+// ============================================
+// MCP JSON-RPC Endpoint (Claude Protocol)
+// ============================================
+
+/**
+ * POST /_mcp - Handle Claude MCP protocol (JSON-RPC)
+ */
+app.post('/_mcp', handleMCPRequest);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File size exceeds 5MB limit' });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+  
+  if (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  
+  next();
 });
+
+// ============================================
+// POST / - MCP Protocol Endpoint (Claude compatibility)
+// ============================================
+// Route POST / to the MCP handler for Claude Desktop compatibility
+app.post('/', handleMCPRequest);
 
 // Start server
 app.listen(PORT, () => {
