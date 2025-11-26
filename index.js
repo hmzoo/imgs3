@@ -10,6 +10,48 @@ const { NodeHttpHandler } = require('@smithy/node-http-handler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const API_TOKEN = process.env.API_TOKEN;
+const REQUIRE_AUTH = process.env.REQUIRE_AUTH !== 'false';
+
+// ============================================
+// Middleware
+// ============================================
+
+// API Token Authentication Middleware
+function authenticateToken(req, res, next) {
+  // Skip auth for health check endpoint
+  if (req.path === '/' && req.method === 'GET') {
+    return next();
+  }
+
+  if (!REQUIRE_AUTH) {
+    return next();
+  }
+
+  if (!API_TOKEN) {
+    console.warn('⚠️  API_TOKEN not configured but REQUIRE_AUTH=true. Authentication disabled.');
+    return next();
+  }
+
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1]; // Extract token from "Bearer <token>"
+
+  if (!token) {
+    return res.status(401).json({ 
+      error: 'Unauthorized',
+      message: 'API token is required. Use "Authorization: Bearer <token>" header'
+    });
+  }
+
+  if (token !== API_TOKEN) {
+    return res.status(403).json({ 
+      error: 'Forbidden',
+      message: 'Invalid API token'
+    });
+  }
+
+  next();
+}
 
 // ============================================
 // Helper Functions
@@ -104,6 +146,9 @@ const storage = multer.memoryStorage();
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Apply authentication middleware to all routes except health check
+app.use(authenticateToken);
 
 // ============================================
 // Routes
@@ -300,4 +345,17 @@ app.listen(PORT, () => {
   console.log(`📤 POST /upload - Upload images (3 modes)`);
   console.log(`📝 GET /status - API status`);
   console.log(`🔗 GET /generate-url?fileName=<name> - Generate S3 URL`);
+  console.log('');
+  
+  if (REQUIRE_AUTH) {
+    if (API_TOKEN) {
+      console.log(`🔒 Authentication enabled`);
+      console.log(`   Add header: Authorization: Bearer ${API_TOKEN.substring(0, 8)}...`);
+    } else {
+      console.log(`⚠️  REQUIRE_AUTH=true but API_TOKEN not configured`);
+      console.log(`   Set API_TOKEN environment variable to enable authentication`);
+    }
+  } else {
+    console.log(`🔓 Authentication disabled`);
+  }
 });
