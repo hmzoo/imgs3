@@ -11,6 +11,8 @@
 require('dotenv').config();
 const express = require('express');
 const { S3Client, ListObjectsV2Command, HeadObjectCommand, DeleteObjectCommand, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const path = require('path');
 
 // Configuration
@@ -25,14 +27,26 @@ const SUPPORTED_TYPES = {
   videos: ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska']
 };
 
-// Initialize S3 Client
-const s3Client = new S3Client({ 
+// Initialize S3 Client with proxy support
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+const s3Config = {
   region: REGION,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
   }
-});
+};
+
+// Add proxy agent if proxy is configured
+if (proxyUrl) {
+  console.log(`🔌 Proxy detected: ${proxyUrl}`);
+  const proxyAgent = new HttpsProxyAgent(proxyUrl);
+  s3Config.requestHandler = new NodeHttpHandler({
+    httpsAgent: proxyAgent
+  });
+}
+
+const s3Client = new S3Client(s3Config);
 
 // Initialize Express app
 const app = express();
