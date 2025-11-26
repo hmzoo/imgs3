@@ -41,13 +41,15 @@ Result: Complex, hard to maintain, HTTP overhead for MCP
 ```
 Service 1: REST API (index.js on port 3000)
 ├── Helper functions
-│   ├── generateImageUrl()
+│   ├── generateMediaUrl()
 │   ├── buildS3Key()
-│   ├── decodeBase64Image()
-│   └── downloadImageFromUrl()
-├── S3 upload logic
+│   ├── decodeBase64Media()
+│   ├── downloadMediaFromUrl()
+│   ├── isAllowedMediaType()
+│   └── [Backward compatible aliases]
+├── S3 upload logic (images & videos)
 ├── Express routes
-│   ├── POST /upload (3 modes)
+│   ├── POST /upload (3 modes: multipart, base64, URL)
 │   ├── GET /status
 │   ├── GET /generate-url
 │   └── GET /
@@ -62,6 +64,7 @@ Service 2: MCP Server (mcp-server.js, stdio transport)
 
 Communication: MCP Server → HTTP → REST API
 Result: Clean separation, easy to maintain, standard MCP pattern
+Supported: Images (JPEG, PNG, GIF, WebP, SVG) & Videos (MP4, WebM, OGG, MOV, AVI, MKV)
 ```
 
 ## Running Both Services

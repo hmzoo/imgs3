@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * MCP Server - Standalone Image Upload Server
+ * MCP Server - Standalone Media Upload Server (Images & Videos)
  * Uses stdio transport (stdin/stdout)
  * Run with: node mcp-server.js
  * 
@@ -9,6 +9,10 @@
  * - Set MCP_API_BASE_URL in .env file
  * - Default: http://localhost:3000
  * - For production: use your Vercel API URL
+ *
+ * Supported media types:
+ * - Images: JPEG, PNG, GIF, WebP, SVG
+ * - Videos: MP4, WebM, OGG, MOV, AVI, MKV
  */
 
 require('dotenv').config();
@@ -19,25 +23,40 @@ const fetch = require('node-fetch');
 // ============================================
 
 const API_BASE_URL = process.env.MCP_API_BASE_URL || 'http://localhost:3000';
+const API_TOKEN = process.env.API_TOKEN;
+const REQUIRE_AUTH = process.env.REQUIRE_AUTH !== 'false';
+
+// Helper function to add authorization header
+function getHeaders() {
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  
+  if (API_TOKEN && REQUIRE_AUTH) {
+    headers['Authorization'] = `Bearer ${API_TOKEN}`;
+  }
+  
+  return headers;
+}
 const TOOLS = [
   {
-    name: 'uploadImage',
-    description: 'Upload an image to S3. Supports 3 modes: multipart file, base64 data, or URL.',
+    name: 'uploadMedia',
+    description: 'Upload media (images or videos) to S3. Supports 3 modes: multipart file, base64 data, or URL. Images: JPEG, PNG, GIF, WebP, SVG. Videos: MP4, WebM, OGG, MOV, AVI, MKV.',
     inputSchema: {
       type: 'object',
       properties: {
         mode: {
           type: 'string',
           enum: ['base64', 'url'],
-          description: 'Upload mode: base64 for Base64 data, url for image URL'
+          description: 'Upload mode: base64 for Base64 data, url for media URL'
         },
         image: {
           type: 'string',
-          description: 'Base64 image data or data URI (for base64 mode)'
+          description: 'Base64 media data or data URI (for base64 mode)'
         },
-        imageUrl: {
+        mediaUrl: {
           type: 'string',
-          description: 'Image URL to download (for url mode)'
+          description: 'Media URL to download (for url mode)'
         },
         fileName: {
           type: 'string',
@@ -48,8 +67,8 @@ const TOOLS = [
     }
   },
   {
-    name: 'getImageUrl',
-    description: 'Generate an S3 URL for an image without uploading',
+    name: 'getMediaUrl',
+    description: 'Generate an S3 URL for media (image or video) without uploading',
     inputSchema: {
       type: 'object',
       properties: {
@@ -83,7 +102,7 @@ async function handleInitialize(params) {
       tools: {}
     },
     serverInfo: {
-      name: 'Image Upload MCP Server',
+      name: 'Media Upload MCP Server (Images & Videos)',
       version: '1.0.0'
     }
   };
@@ -100,10 +119,10 @@ async function handleCallTool(params) {
 
   try {
     switch (name) {
-      case 'uploadImage':
-        return await uploadImage(args);
-      case 'getImageUrl':
-        return await getImageUrl(args);
+      case 'uploadMedia':
+        return await uploadMedia(args);
+      case 'getMediaUrl':
+        return await getMediaUrl(args);
       case 'getApiStatus':
         return await getApiStatus(args);
       default:
@@ -134,8 +153,8 @@ async function handleCallTool(params) {
 // Tool Implementations
 // ============================================
 
-async function uploadImage(args) {
-  const { mode, image, imageUrl, fileName } = args;
+async function uploadMedia(args) {
+  const { mode, image, mediaUrl, fileName } = args;
 
   if (!mode) {
     return {
@@ -164,20 +183,20 @@ async function uploadImage(args) {
           ]
         };
       }
-      body.image = image;
+      body.mediaData = image;
     } else if (mode === 'url') {
-      if (!imageUrl) {
+      if (!mediaUrl) {
         return {
           isError: true,
           content: [
             {
               type: 'text',
-              text: 'Error: imageUrl is required for url mode'
+              text: 'Error: mediaUrl is required for url mode'
             }
           ]
         };
       }
-      body.imageUrl = imageUrl;
+      body.mediaUrl = mediaUrl;
     } else {
       return {
         isError: true,
@@ -196,9 +215,7 @@ async function uploadImage(args) {
 
     const response = await fetch(`${API_BASE_URL}/upload`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: getHeaders(),
       body: JSON.stringify(body)
     });
 
@@ -238,7 +255,7 @@ async function uploadImage(args) {
   }
 }
 
-async function getImageUrl(args) {
+async function getMediaUrl(args) {
   const { fileName } = args;
 
   if (!fileName) {
@@ -255,7 +272,10 @@ async function getImageUrl(args) {
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/generate-url?fileName=${encodeURIComponent(fileName)}`
+      `${API_BASE_URL}/generate-url?fileName=${encodeURIComponent(fileName)}`,
+      {
+        headers: getHeaders()
+      }
     );
 
     if (!response.ok) {
@@ -296,7 +316,9 @@ async function getImageUrl(args) {
 
 async function getApiStatus(args) {
   try {
-    const response = await fetch(`${API_BASE_URL}/status`);
+    const response = await fetch(`${API_BASE_URL}/status`, {
+      headers: getHeaders()
+    });
 
     if (!response.ok) {
       return {
@@ -428,7 +450,23 @@ process.on('uncaughtException', (error) => {
 });
 
 // Log startup info to stderr (not interfering with stdout)
-console.error(`🚀 MCP Server started`);
+console.error(`🚀 MCP Server started (Media Upload - Images & Videos)`);
 console.error(`📡 Listening on stdio transport`);
 console.error(`🔗 API Base URL: ${API_BASE_URL}`);
 console.error(`📝 Ready to handle MCP requests`);
+console.error(`📦 Supported media types:`);
+console.error(`   Images: JPEG, PNG, GIF, WebP, SVG`);
+console.error(`   Videos: MP4, WebM, OGG, MOV, AVI, MKV`);
+
+if (REQUIRE_AUTH) {
+  if (API_TOKEN) {
+    console.error(`🔒 Authentication enabled`);
+    console.error(`   Token: ${API_TOKEN.substring(0, 8)}...`);
+    console.error(`   All API calls include: Authorization: Bearer <token>`);
+  } else {
+    console.error(`⚠️  REQUIRE_AUTH=true but API_TOKEN not configured`);
+    console.error(`   Set API_TOKEN in .env to enable authentication`);
+  }
+} else {
+  console.error(`🔓 Authentication disabled (REQUIRE_AUTH=false)`);
+}

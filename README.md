@@ -1,15 +1,19 @@
 # imgs3
 
-API service for uploading images to Amazon S3. The service stores images with unique IDs and returns the image URL.
+API service for uploading images and videos to Amazon S3. The service stores media files with unique IDs and returns the media URL.
 
 ## Features
 
-- Upload images to Amazon S3 bucket
-- Automatic unique ID generation for each image using UUID
-- Support for JPEG, PNG, GIF, and WebP formats
-- File size limit: 5MB
-- Returns the public URL of the uploaded image
+- Upload images and videos to Amazon S3 bucket
+- Automatic unique ID generation for each media file using UUID
+- Support for multiple formats:
+  - **Images**: JPEG, PNG, GIF, WebP, SVG
+  - **Videos**: MP4, WebM, OGG, MOV, AVI, MKV
+- File size limit: 500MB
+- Returns the public URL of the uploaded media
+- 3 upload modes: multipart, base64, URL
 - Built with Node.js and Express
+- API token authentication support
 
 ## Prerequisites
 
@@ -37,11 +41,14 @@ cp .env.example .env
 
 4. Configure your `.env` file with your AWS credentials:
 ```env
-AWS_REGION=us-east-1
+AWS_REGION=eu-west-1
 AWS_ACCESS_KEY_ID=your_access_key_id
 AWS_SECRET_ACCESS_KEY=your_secret_access_key
 AWS_S3_BUCKET_NAME=your_bucket_name
+AWS_S3_FOLDER=images
 PORT=3000
+API_TOKEN=your_secure_token
+REQUIRE_AUTH=true
 ```
 
 ## Usage
@@ -61,75 +68,176 @@ Health check endpoint that returns API information.
 **Response:**
 ```json
 {
-  "message": "Image Upload API is running",
+  "message": "Media Upload API is running (images & videos)",
+  "supported_types": {
+    "images": ["JPEG", "PNG", "GIF", "WebP", "SVG"],
+    "videos": ["MP4", "WebM", "OGG", "MOV", "AVI", "MKV"]
+  },
   "endpoints": {
-    "upload": "POST /upload - Upload an image to S3"
+    "upload": "POST /upload - Upload media (3 modes)",
+    "status": "GET /status - API status",
+    "generate-url": "GET /generate-url?fileName=<name> - Generate S3 URL"
   }
 }
 ```
 
 ### POST /upload
-Upload an image to S3.
+Upload media (images or videos) to S3. Supports 3 upload modes.
 
-**Request:**
+**Mode 1: Multipart Form Data**
 - Method: `POST`
 - Content-Type: `multipart/form-data`
-- Body parameter: `image` (file)
+- Body: `image` (file) + optional `fileName`
 
-**Example using cURL:**
+Example with cURL:
 ```bash
 curl -X POST http://localhost:3000/upload \
-  -F "image=@/path/to/your/image.jpg"
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "image=@video.mp4"
 ```
 
-**Example using JavaScript (fetch):**
-```javascript
-const formData = new FormData();
-formData.append('image', fileInput.files[0]);
+**Mode 2: Base64 JSON**
+- Method: `POST`
+- Content-Type: `application/json`
+- Body: `image` (base64 string) + optional `fileName`
 
-fetch('http://localhost:3000/upload', {
-  method: 'POST',
-  body: formData
-})
-  .then(response => response.json())
-  .then(data => console.log('Image URL:', data.url))
-  .catch(error => console.error('Error:', error));
+Example with cURL:
+```bash
+curl -X POST http://localhost:3000/upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "data:video/mp4;base64,AAAA...",
+    "fileName": "video.mp4"
+  }'
+```
+
+**Mode 3: URL Download**
+- Method: `POST`
+- Content-Type: `application/json`
+- Body: `mediaUrl` or `imageUrl` + optional `fileName`
+
+Example with cURL:
+```bash
+curl -X POST http://localhost:3000/upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mediaUrl": "https://example.com/video.mp4",
+    "fileName": "video.mp4"
+  }'
 ```
 
 **Success Response (200):**
 ```json
 {
-  "message": "Image uploaded successfully",
-  "url": "https://your-bucket-name.s3.us-east-1.amazonaws.com/uuid-here.jpg",
-  "fileName": "uuid-here.jpg"
+  "message": "Media uploaded successfully",
+  "url": "https://your-bucket-name.s3.eu-west-1.amazonaws.com/images/uuid-here.mp4",
+  "fileName": "uuid-here.mp4",
+  "s3Key": "images/uuid-here.mp4",
+  "contentType": "video/mp4",
+  "source": "multipart-upload"
 }
 ```
 
 **Error Response (400):**
 ```json
 {
-  "error": "No image file provided"
+  "error": "No media provided",
+  "supported_modes": [
+    "multipart/form-data with \"image\" file",
+    "JSON with \"image\" (base64 or data URI)",
+    "JSON with \"mediaUrl\" or \"imageUrl\""
+  ],
+  "supported_types": {
+    "images": ["JPEG", "PNG", "GIF", "WebP", "SVG"],
+    "videos": ["MP4", "WebM", "OGG", "MOV", "AVI", "MKV"]
+  }
 }
 ```
 
 **Error Response (500):**
 ```json
 {
-  "error": "Failed to upload image",
+  "error": "Failed to upload media",
   "details": "Error message details"
 }
 ```
 
-## Supported Image Formats
+### GET /status
+Get API status and configuration.
 
+**Response:**
+```json
+{
+  "status": "online",
+  "bucket": "hmzoo",
+  "region": "eu-west-1",
+  "folder": "images"
+}
+```
+
+### GET /generate-url
+Generate S3 URL for a file without uploading.
+
+**Query Parameters:**
+- `fileName` (required): The name of the file in S3
+
+**Example:**
+```bash
+curl "http://localhost:3000/generate-url?fileName=video.mp4" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+```json
+{
+  "fileName": "video.mp4",
+  "s3Key": "images/video.mp4",
+  "url": "https://hmzoo.s3.eu-west-1.amazonaws.com/images/video.mp4",
+  "bucket": "hmzoo",
+  "region": "eu-west-1",
+  "folder": "images"
+}
+```
+
+## Supported Media Formats
+
+### Images
 - JPEG (.jpg, .jpeg)
 - PNG (.png)
 - GIF (.gif)
 - WebP (.webp)
+- SVG (.svg)
+
+### Videos
+- MP4 (.mp4)
+- WebM (.webm)
+- OGG (.ogg)
+- MOV (.mov)
+- AVI (.avi)
+- MKV (.mkv)
 
 ## File Size Limit
 
-Maximum file size: 5MB
+Maximum file size: **500MB**
+
+## Authentication
+
+The API supports optional token-based authentication via the `Authorization` header.
+
+**Configuration:**
+```env
+REQUIRE_AUTH=true
+API_TOKEN=your-secure-token-here
+```
+
+**Usage:**
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3000/status
+```
+
+If `REQUIRE_AUTH=false`, the token is not required.
 
 ## AWS S3 Configuration
 

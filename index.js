@@ -57,7 +57,7 @@ function authenticateToken(req, res, next) {
 // Helper Functions
 // ============================================
 
-function generateImageUrl(fileName) {
+function generateMediaUrl(fileName) {
   const bucket = process.env.AWS_S3_BUCKET_NAME;
   const region = process.env.AWS_REGION;
   const folder = process.env.AWS_S3_FOLDER || '';
@@ -70,23 +70,36 @@ function buildS3Key(fileName) {
   return `${folder}${fileName}`;
 }
 
-function decodeBase64Image(imageData) {
-  let base64String = imageData;
+function isAllowedMediaType(contentType) {
+  const allowedMimeTypes = [
+    // Images
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+    // Videos
+    'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'
+  ];
+  return allowedMimeTypes.includes(contentType);
+}
+
+function decodeBase64Media(mediaData) {
+  let base64String = mediaData;
   let contentType = 'image/jpeg';
   
-  if (imageData.startsWith('data:')) {
-    const matches = imageData.match(/^data:([^;]+);base64,(.+)$/);
+  if (mediaData.startsWith('data:')) {
+    const matches = mediaData.match(/^data:([^;]+);base64,(.+)$/);
     if (matches) {
       contentType = matches[1];
       base64String = matches[2];
     } else {
-      throw new Error('Invalid data URI format. Use: data:image/type;base64,<base64string>');
+      throw new Error('Invalid data URI format. Use: data:type/subtype;base64,<base64string>');
     }
   }
   
-  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-  if (!allowedMimeTypes.includes(contentType)) {
-    throw new Error(`Invalid image type: ${contentType}. Only JPEG, PNG, GIF, and WebP are allowed.`);
+  if (!isAllowedMediaType(contentType)) {
+    const supportedTypes = [
+      'Images: JPEG, PNG, GIF, WebP, SVG',
+      'Videos: MP4, WebM, OGG, MOV, AVI, MKV'
+    ].join(', ');
+    throw new Error(`Invalid media type: ${contentType}. Supported: ${supportedTypes}`);
   }
   
   try {
@@ -97,16 +110,19 @@ function decodeBase64Image(imageData) {
   }
 }
 
-async function downloadImageFromUrl(imageUrl) {
-  const response = await fetch(imageUrl);
+async function downloadMediaFromUrl(mediaUrl) {
+  const response = await fetch(mediaUrl);
   if (!response.ok) {
-    throw new Error(`Failed to fetch image: ${response.statusText}`);
+    throw new Error(`Failed to fetch media: ${response.statusText}`);
   }
   
   const contentType = response.headers.get('content-type');
-  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-  if (!allowedMimeTypes.includes(contentType)) {
-    throw new Error(`Invalid image type: ${contentType}. Only JPEG, PNG, GIF, and WebP are allowed.`);
+  if (!isAllowedMediaType(contentType)) {
+    const supportedTypes = [
+      'Images: JPEG, PNG, GIF, WebP, SVG',
+      'Videos: MP4, WebM, OGG, MOV, AVI, MKV'
+    ].join(', ');
+    throw new Error(`Invalid media type: ${contentType}. Supported: ${supportedTypes}`);
   }
   
   const buffer = await response.buffer();
@@ -144,8 +160,8 @@ const storage = multer.memoryStorage();
 // Express Configuration
 // ============================================
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '500mb' }));
+app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
 // Apply authentication middleware to all routes except health check
 app.use(authenticateToken);
@@ -157,9 +173,13 @@ app.use(authenticateToken);
 // Health check
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Image Upload API is running',
+    message: 'Media Upload API is running (images & videos)',
+    supported_types: {
+      images: ['JPEG', 'PNG', 'GIF', 'WebP', 'SVG'],
+      videos: ['MP4', 'WebM', 'OGG', 'MOV', 'AVI', 'MKV']
+    },
     endpoints: {
-      upload: 'POST /upload - Upload an image (3 modes)',
+      upload: 'POST /upload - Upload media (3 modes)',
       status: 'GET /status - API status',
       'generate-url': 'GET /generate-url?fileName=<name> - Generate S3 URL'
     }
@@ -185,7 +205,7 @@ app.get('/generate-url', (req, res) => {
       return res.status(400).json({ error: 'fileName query parameter is required' });
     }
 
-    const url = generateImageUrl(fileName);
+    const url = generateMediaUrl(fileName);
     const s3Key = buildS3Key(fileName);
 
     res.json({
@@ -204,26 +224,31 @@ app.get('/generate-url', (req, res) => {
 // Upload endpoint - 3 modes
 const uploadWithFields = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit for video support
   fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (allowedMimeTypes.includes(file.mimetype)) {
+    if (isAllowedMediaType(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'));
+      const supportedTypes = [
+        'Images: JPEG, PNG, GIF, WebP, SVG',
+        'Videos: MP4, WebM, OGG, MOV, AVI, MKV'
+      ].join(', ');
+      cb(new Error(`Invalid file type. Supported: ${supportedTypes}`));
     }
   },
 });
 
-app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
+// Upload endpoint - supports 3 modes
+app.post('/upload', uploadWithFields.single('media'), async (req, res) => {
   try {
     let buffer, contentType, fileName;
 
     // Mode 1: Multipart file upload
-    if (req.file) {
-      buffer = req.file.buffer;
-      contentType = req.file.mimetype;
-      const originalFileName = req.file.originalname;
+    const file = req.file;
+    if (file) {
+      buffer = file.buffer;
+      contentType = file.mimetype;
+      const originalFileName = file.originalname;
       const customFileName = req.body?.fileName;
       
       if (customFileName) {
@@ -243,20 +268,21 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
       };
 
       await s3Client.send(new PutObjectCommand(uploadParams));
-      const imageUrl = generateImageUrl(fileName);
+      const mediaUrl = generateMediaUrl(fileName);
 
       return res.status(200).json({
-        message: 'Image uploaded successfully',
-        url: imageUrl,
+        message: 'Media uploaded successfully',
+        url: mediaUrl,
         fileName,
         s3Key,
+        contentType,
         source: 'multipart-upload'
       });
     }
     
     // Mode 2: JSON with base64
-    if (req.body?.image) {
-      const { buffer: b64Buffer, contentType: b64ContentType } = decodeBase64Image(req.body.image);
+    if (req.body?.mediaData) {
+      const { buffer: b64Buffer, contentType: b64ContentType } = decodeBase64Media(req.body.mediaData);
       buffer = b64Buffer;
       contentType = b64ContentType;
 
@@ -266,13 +292,21 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
         const uniqueId = uuidv4();
         const ext = contentType === 'image/jpeg' ? '.jpg' : 
                     contentType === 'image/png' ? '.png' :
-                    contentType === 'image/gif' ? '.gif' : '.webp';
+                    contentType === 'image/gif' ? '.gif' :
+                    contentType === 'image/webp' ? '.webp' :
+                    contentType === 'video/mp4' ? '.mp4' :
+                    contentType === 'video/webm' ? '.webm' :
+                    contentType === 'video/ogg' ? '.ogg' :
+                    contentType === 'video/quicktime' ? '.mov' :
+                    contentType === 'video/x-msvideo' ? '.avi' :
+                    contentType === 'video/x-matroska' ? '.mkv' : '.bin';
         fileName = `${uniqueId}${ext}`;
       }
     }
-    // Mode 3: JSON with imageUrl
-    else if (req.body?.imageUrl) {
-      const { buffer: urlBuffer, contentType: urlContentType } = await downloadImageFromUrl(req.body.imageUrl);
+    // Mode 3: JSON with mediaUrl
+    else if (req.body?.mediaUrl) {
+      const url = req.body.mediaUrl;
+      const { buffer: urlBuffer, contentType: urlContentType } = await downloadMediaFromUrl(url);
       buffer = urlBuffer;
       contentType = urlContentType;
 
@@ -280,18 +314,32 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
         fileName = req.body.fileName;
       } else {
         const uniqueId = uuidv4();
-        fileName = `${uniqueId}.jpg`;
+        const ext = contentType === 'image/jpeg' ? '.jpg' : 
+                    contentType === 'image/png' ? '.png' :
+                    contentType === 'image/gif' ? '.gif' :
+                    contentType === 'image/webp' ? '.webp' :
+                    contentType === 'video/mp4' ? '.mp4' :
+                    contentType === 'video/webm' ? '.webm' :
+                    contentType === 'video/ogg' ? '.ogg' :
+                    contentType === 'video/quicktime' ? '.mov' :
+                    contentType === 'video/x-msvideo' ? '.avi' :
+                    contentType === 'video/x-matroska' ? '.mkv' : '.bin';
+        fileName = `${uniqueId}${ext}`;
       }
     }
     // No valid input
     else {
       return res.status(400).json({ 
-        error: 'No image provided',
+        error: 'No media provided',
         supported_modes: [
           'multipart/form-data with "image" file',
           'JSON with "image" (base64 or data URI)',
-          'JSON with "imageUrl"'
-        ]
+          'JSON with "mediaUrl"'
+        ],
+        supported_types: {
+          images: ['JPEG', 'PNG', 'GIF', 'WebP', 'SVG'],
+          videos: ['MP4', 'WebM', 'OGG', 'MOV', 'AVI', 'MKV']
+        }
       });
     }
 
@@ -305,19 +353,20 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
     };
 
     await s3Client.send(new PutObjectCommand(uploadParams));
-    const imageUrl = generateImageUrl(fileName);
+    const mediaUrl = generateMediaUrl(fileName);
 
     res.status(200).json({
-      message: 'Image uploaded successfully',
-      url: imageUrl,
+      message: 'Media uploaded successfully',
+      url: mediaUrl,
       fileName,
       s3Key,
+      contentType,
       source: req.body?.image ? 'base64-upload' : 'url-upload'
     });
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ 
-      error: 'Failed to upload image',
+      error: 'Failed to upload media',
       details: error.message 
     });
   }
@@ -327,7 +376,7 @@ app.post('/upload', uploadWithFields.single('image'), async (req, res) => {
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File size exceeds 5MB limit' });
+      return res.status(400).json({ error: 'File size exceeds 500MB limit' });
     }
     return res.status(400).json({ error: err.message });
   }
@@ -341,10 +390,13 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Image Upload API running on http://localhost:${PORT}`);
-  console.log(`📤 POST /upload - Upload images (3 modes)`);
+  console.log(`🚀 Media Upload API running on http://localhost:${PORT}`);
+  console.log(`📤 POST /upload - Upload media: images (JPEG, PNG, GIF, WebP, SVG) & videos (MP4, WebM, OGG, MOV, AVI, MKV)`);
   console.log(`📝 GET /status - API status`);
   console.log(`🔗 GET /generate-url?fileName=<name> - Generate S3 URL`);
+  console.log('');
+  console.log(`📦 File size limit: 500MB`);
+  console.log(`📍 Storage bucket: ${process.env.AWS_S3_BUCKET_NAME} (${process.env.AWS_REGION})`);
   console.log('');
   
   if (REQUIRE_AUTH) {
