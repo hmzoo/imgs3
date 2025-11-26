@@ -2,6 +2,7 @@
 let allMedia = [];
 let filteredMedia = [];
 let selectedKeys = new Set();
+let currentViewerIndex = -1;
 
 // DOM Elements
 const mediaGrid = document.getElementById('mediaGrid');
@@ -22,6 +23,14 @@ const confirmOkBtn = document.getElementById('confirmOkBtn');
 const confirmCancelBtn = document.getElementById('confirmCancelBtn');
 const notification = document.getElementById('notification');
 
+// Viewer elements
+const viewerModal = document.getElementById('viewerModal');
+const viewerClose = document.getElementById('viewerClose');
+const viewerPrev = document.getElementById('viewerPrev');
+const viewerNext = document.getElementById('viewerNext');
+const viewerContent = document.getElementById('viewerContent');
+const viewerInfo = document.getElementById('viewerInfo');
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     loadAppInfo();
@@ -39,6 +48,20 @@ function setupEventListeners() {
     searchInput.addEventListener('input', filterMedia);
     filterType.addEventListener('change', filterMedia);
     confirmCancelBtn.addEventListener('click', closeConfirmModal);
+    
+    // Viewer controls
+    viewerClose.addEventListener('click', closeViewer);
+    viewerPrev.addEventListener('click', showPrevMedia);
+    viewerNext.addEventListener('click', showNextMedia);
+    
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+        if (viewerModal.style.display === 'flex') {
+            if (e.key === 'ArrowLeft') showPrevMedia();
+            if (e.key === 'ArrowRight') showNextMedia();
+            if (e.key === 'Escape') closeViewer();
+        }
+    });
 }
 
 // Load app info
@@ -176,6 +199,7 @@ function createMediaCard(media) {
     // Checkbox handler
     const checkbox = card.querySelector('.media-checkbox');
     checkbox.addEventListener('change', (e) => {
+        e.stopPropagation();
         if (e.target.checked) {
             selectedKeys.add(media.key);
             card.classList.add('selected');
@@ -188,12 +212,22 @@ function createMediaCard(media) {
     
     // Delete button handler
     const deleteBtn = card.querySelector('.delete-btn');
-    deleteBtn.addEventListener('click', () => {
+    deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         showConfirmModal(
             'Delete File',
             `Are you sure you want to delete "${media.name}"?`,
             () => deleteFile(media.key)
         );
+    });
+    
+    // Click to view
+    const previewElement = card.querySelector('.media-preview');
+    previewElement.addEventListener('click', (e) => {
+        if (!e.target.closest('input, button')) {
+            currentViewerIndex = filteredMedia.indexOf(media);
+            showViewer();
+        }
     });
     
     return card;
@@ -355,3 +389,50 @@ confirmModal.addEventListener('click', (e) => {
         closeConfirmModal();
     }
 });
+
+// Close viewer on outside click
+viewerModal.addEventListener('click', (e) => {
+    if (e.target === viewerModal) {
+        closeViewer();
+    }
+});
+
+// Viewer functions
+function showViewer() {
+    if (currentViewerIndex < 0 || currentViewerIndex >= filteredMedia.length) return;
+    
+    const media = filteredMedia[currentViewerIndex];
+    viewerContent.innerHTML = '';
+    
+    if (media.type === 'image') {
+        viewerContent.innerHTML = `<img src="${media.url}" alt="${media.name}">`;
+    } else if (media.type === 'video') {
+        viewerContent.innerHTML = `<video controls style="max-width: 100%; max-height: 100%;"><source src="${media.url}"></video>`;
+    }
+    
+    viewerInfo.innerHTML = `
+        <strong>${media.name}</strong> • ${media.sizeFormatted} • ${new Date(media.lastModified).toLocaleDateString()}
+        <br><span style="opacity: 0.7;">${currentViewerIndex + 1} / ${filteredMedia.length}</span>
+    `;
+    
+    viewerModal.style.display = 'flex';
+}
+
+function closeViewer() {
+    viewerModal.style.display = 'none';
+    currentViewerIndex = -1;
+}
+
+function showNextMedia() {
+    if (currentViewerIndex < filteredMedia.length - 1) {
+        currentViewerIndex++;
+        showViewer();
+    }
+}
+
+function showPrevMedia() {
+    if (currentViewerIndex > 0) {
+        currentViewerIndex--;
+        showViewer();
+    }
+}
