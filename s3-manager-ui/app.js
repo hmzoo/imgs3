@@ -142,7 +142,6 @@ function renderMedia() {
 // Create media card
 function createMediaCard(media) {
     const isSelected = selectedKeys.has(media.key);
-    const encodedKey = encodeURIComponent(Buffer.from(media.key).toString('base64'));
     
     const card = document.createElement('div');
     card.className = `media-card ${isSelected ? 'selected' : ''}`;
@@ -226,9 +225,10 @@ function updateButtons() {
 // Delete single file
 async function deleteFile(key) {
     try {
-        const encodedKey = encodeURIComponent(Buffer.from(key).toString('base64'));
-        const response = await fetch(`/api/media/${encodedKey}`, {
-            method: 'DELETE'
+        const response = await fetch('/api/media', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key })
         });
         
         if (!response.ok) throw new Error('Failed to delete file');

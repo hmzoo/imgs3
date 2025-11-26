@@ -125,12 +125,16 @@ app.get('/api/media', async (req, res) => {
 });
 
 // API: Delete single file
-app.delete('/api/media/:encodedKey', async (req, res) => {
+app.delete('/api/media', async (req, res) => {
   try {
-    const key = Buffer.from(decodeURIComponent(req.params.encodedKey), 'base64').toString('utf-8');
+    const { key } = req.body;
+    
+    if (!key) {
+      return res.status(400).json({ error: 'No key provided' });
+    }
     
     // Security: Ensure the key is within our folder
-    if (!key.startsWith(FOLDER + '/') && FOLDER) {
+    if (FOLDER && !key.startsWith(FOLDER + '/')) {
       return res.status(403).json({ error: 'Access denied: key outside allowed folder' });
     }
     
